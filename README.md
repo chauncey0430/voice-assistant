@@ -1,135 +1,81 @@
-# 本地语音助手（Windows 优先）
+# 本地语音助手（最小 Ollama 兜底版）
 
-这是一个基于 Python 3.10+ 的本地语音助手最小可运行版本，支持：
+本项目基于本地技术栈：
 
-- 麦克风录音（`sounddevice`）
-- 语音转文字（`faster-whisper`）
-- 规则路由执行命令（无云端、无 LLM）
-- 语音播报结果（`pyttsx3`）
+- `sounddevice`（录音）
+- `faster-whisper`（语音识别）
+- `pyttsx3`（语音播报）
+- `Ollama`（本地 LLM 兜底）
 
-> 设计目标：可直接扩展 `skills/` 目录，逐步演进为更完整的本地助手。
-
----
-
-## 1. 功能列表
-
-当前支持命令（中文）：
-
-- 打开浏览器
-- 打开记事本
-- 打开计算器
-- 现在几点了
-- 查看系统信息
-- 退出程序
+> 不接云端服务，不做 GUI，不执行任意系统命令。
 
 ---
 
-## 2. 项目结构
+## 本轮完成内容（小阶段）
 
-```text
-voice-assistant/
-├── app.py
-├── config.py
-├── requirements.txt
-├── core/
-│   ├── __init__.py
-│   ├── audio.py
-│   ├── stt.py
-│   ├── tts.py
-│   └── router.py
-├── skills/
-│   ├── __init__.py
-│   └── system_skills.py
-└── utils/
-    ├── __init__.py
-    └── logger.py
-```
+1. 新增 Ollama 调用模块：`core/llm.py`
+2. 在 `config.py` 增加 Ollama 配置项
+3. 路由改为“规则优先，LLM 兜底”
+4. LLM 仅支持固定 JSON 动作：
+   - `open_browser`
+   - `get_time`
+   - `unknown`
+5. 做了最小解析与异常降级
+6. 更新 README
+7. 增加最小测试
 
 ---
 
-## 3. 各文件说明
+## 路由策略
 
-- `app.py`：程序入口，串联录音/STT/路由/TTS 的主循环。
-- `config.py`：全局配置（录音参数、Whisper 模型参数、日志级别）。
-- `core/audio.py`：麦克风录音模块。
-- `core/stt.py`：faster-whisper 语音识别模块。
-- `core/tts.py`：pyttsx3 语音播报模块。
-- `core/router.py`：规则路由器，负责命令匹配和动作分发。
-- `skills/system_skills.py`：具体可执行技能（打开应用、查时间、系统信息）。
-- `utils/logger.py`：日志初始化。
-- `requirements.txt`：依赖列表。
+1. 先走规则匹配（原有能力不变）
+2. 规则未命中时，调用 Ollama
+3. 解析 Ollama 的 JSON
+4. 只允许执行白名单动作（本轮仅 `open_browser` / `get_time`）
+5. 异常或非法 JSON 则降级为未知命令
 
 ---
 
-## 4. 环境准备
+## Ollama 配置（`config.py`）
 
-## Windows（推荐）
+- `OLLAMA_ENABLED`：是否启用 LLM 兜底（默认 `False`）
+- `OLLAMA_MODEL`：模型名（默认 `qwen2.5:3b`）
+- `OLLAMA_BASE_URL`：服务地址（默认 `http://127.0.0.1:11434`）
+- `OLLAMA_TIMEOUT`：超时时间（秒）
 
-1. 安装 Python 3.10+。
-2. 在项目目录创建并激活虚拟环境：
+---
+
+## Ollama 本地准备
 
 ```bash
-python -m venv .venv
-.venv\Scripts\activate
+ollama pull qwen2.5:3b
 ```
 
-3. 安装依赖：
+确保 Ollama 服务已启动并可访问 `OLLAMA_BASE_URL`。
 
+---
+
+## 最小验证
+
+### 1) 单元测试
 ```bash
-pip install -r requirements.txt
+python -m unittest tests.test_router tests.test_llm
 ```
 
-> 首次运行 `faster-whisper` 会下载模型文件（本地推理，不依赖云端 API）。
-
----
-
-## 5. 运行方式
-
+### 2) 文本模拟（无需麦克风）
 ```bash
-python app.py
+python scripts_text_simulator.py
 ```
 
-启动后程序会循环：
-
-1. 录音（默认 4 秒）
-2. 识别文本
-3. 路由执行命令
-4. 语音播报结果
+### 3) 语法检查
+```bash
+python -m py_compile app.py config.py core/*.py skills/*.py utils/*.py tests/*.py scripts_self_check.py scripts_text_simulator.py
+```
 
 ---
 
-## 6. 配置项
+## 本轮限制（下一轮再做）
 
-可在 `config.py` 中调整：
-
-- `RECORD_SECONDS`：每轮录音时长（秒）
-- `SAMPLE_RATE`：采样率（默认 16000）
-- `WHISPER_MODEL_SIZE`：模型大小（如 `small`、`base`）
-- `WHISPER_DEVICE`：设备（`cpu`/`cuda`）
-- `WHISPER_COMPUTE_TYPE`：推理精度（默认 `int8`）
-- `WHISPER_LANGUAGE`：识别语言（默认 `zh`）
-
----
-
-## 7. 本地验证建议
-
-由于当前运行环境通常无法直接访问你的麦克风/扬声器，请在本机（Windows）做以下验证：
-
-1. `python app.py` 能正常启动。
-2. 说“打开记事本”，确认记事本被打开。
-3. 说“现在几点了”，确认有文字输出和语音播报。
-4. 说“退出程序”，确认程序退出。
-
-如遇问题：
-
-- 检查麦克风权限（Windows 隐私设置）。
-- 检查是否安装了音频驱动。
-- 若识别偏慢，可将 `WHISPER_MODEL_SIZE` 改为 `base`。
-
----
-
-## 8. 后续扩展建议
-
-- 在 `skills/` 下新增技能文件（如天气、文件管理、提醒等）。
-- 在 `core/router.py` 增加更细粒度的规则。
-- 后续可在保持本地优先的前提下引入可选 LLM 路由。
+- LLM 暂不支持 `open_app` / `get_system_info` / `exit`
+- 暂不做多参数复杂动作
+- 暂不做 GUI / 云端能力 / 任意命令执行

@@ -3,38 +3,99 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable
 
-from skills.system_skills import SystemSkills
+from config import (
+    EMPTY_TRANSCRIPT_HINT,
+    ENABLE_WAKE_WORD,
+    UNKNOWN_COMMAND_HINT,
+    WAKE_WORD_STRICT,
+    WAKE_WORDS,
+)
+from core.llm import LLMDecision, OllamaIntentParser
+from skills.registry import get_action_handlers, get_skill_definitions
+from utils.text import normalize_text, strip_wake_word
 
 
 @dataclass
 class RouteResult:
     response_text: str
     should_exit: bool = False
+    matched_skill: str | None = None
+    ignored_by_wake_word: bool = False
+    source: str = "rule"
 
 
 class CommandRouter:
-    """简单关键词路由器。"""
+    """基于关键词匹配的轻量级路由器（规则优先，LLM 兜底）。"""
 
-    def __init__(self) -> None:
-        self.routes: list[tuple[list[str], Callable[[], str], bool]] = [
-            (["打开浏览器", "浏览器"], SystemSkills.open_browser, False),
-            (["打开记事本", "记事本"], SystemSkills.open_notepad, False),
-            (["打开计算器", "计算器"], SystemSkills.open_calculator, False),
-            (["现在几点", "几点", "时间"], SystemSkills.get_time, False),
-            (["查看系统信息", "系统信息"], SystemSkills.get_system_info, False),
-            (["退出程序", "退出", "结束"], lambda: "好的，程序即将退出。", True),
-        ]
+    def __init__(self, llm_parser: OllamaIntentParser | None = None) -> None:
+        self.skills = get_skill_definitions()
+        self.action_handlers = get_action_handlers()
+        self.llm_parser = llm_parser or OllamaIntentParser()
 
     def route(self, text: str) -> RouteResult:
-        clean_text = (text or "").strip()
-        if not clean_text:
-            return RouteResult("我没有听清，请再说一次。")
+        normalized = normalize_text(text)
+        if not normalized:
+            return RouteResult(EMPTY_TRANSCRIPT_HINT)
 
-        for keywords, action, should_exit in self.routes:
-            if any(keyword in clean_text for keyword in keywords):
-                result = action()
-                return RouteResult(response_text=result, should_exit=should_exit)
+        if ENABLE_WAKE_WORD:
+            passed, normalized = strip_wake_word(
+                normalized,
+                wake_words=WAKE_WORDS,
+                strict=WAKE_WORD_STRICT,
+            )
+            normalized = normalize_text(normalized)
+            if not passed:
+                return RouteResult(
+                    response_text="未检测到唤醒词，已忽略本次输入。",
+                    ignored_by_wake_word=True,
+                )
+            if not normalized:
+                return RouteResult("已唤醒，请说出命令。")
 
-        return RouteResult("暂不支持这个命令，请试试打开浏览器、打开记事本等。")
+        # 1) 规则优先
+        for skill in self.skills:
+            if any(normalize_text(keyword) in normalized for keyword in skill.keywords):
+                try:
+                    result = skill.handler()
+                    return RouteResult(
+                        response_text=result,
+                        should_exit=skill.should_exit,
+                        matched_skill=skill.name,
+                        source="rule",
+                    )
+                except Exception as exc:
+                    return RouteResult(
+                        response_text=f"执行命令失败：{exc}",
+                        matched_skill=skill.name,
+                        source="rule",
+                    )
+
+        # 2) LLM 兜底（本阶段仅 open_browser/get_time/unknown）
+        llm_decision = self.llm_parser.parse_intent(normalized)
+        llm_result = self._run_llm_decision(llm_decision)
+        if llm_result:
+            return llm_result
+
+        return RouteResult(UNKNOWN_COMMAND_HINT, source="rule")
+
+    def _run_llm_decision(self, decision: LLMDecision) -> RouteResult | None:
+        if decision.error:
+            return None
+
+        action = decision.action
+        if action == "unknown":
+            return None
+
+        if action not in {"open_browser", "get_time"}:
+            return None
+
+        handler = self.action_handlers.get(action)
+        if not handler:
+            return None
+
+        return RouteResult(
+            response_text=handler(),
+            matched_skill=action,
+            source="llm",
+        )
