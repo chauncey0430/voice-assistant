@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from config import EXIT_KEYWORDS
-from skills.app_skill import open_calculator, open_notepad
+from skills.app_skill import open_app, open_calculator, open_notepad
 from skills.base import SkillDefinition
 from skills.browser_skill import open_browser
 from skills.info_skill import get_system_info, get_time
@@ -49,8 +49,14 @@ def get_skill_definitions() -> list[SkillDefinition]:
 
 
 def get_action_handlers() -> dict[str, Callable[[], str]]:
-    """给 LLM fallback 使用的固定 action 白名单（最小版）。"""
+    """给 LLM fallback 使用的固定 action 白名单。"""
     return {
         "open_browser": open_browser,
         "get_time": get_time,
+        "get_system_info": get_system_info,
+        "exit": lambda: "好的，程序即将退出。",
     }
+
+
+def run_open_app(app_name: str) -> str:
+    return open_app(app_name)

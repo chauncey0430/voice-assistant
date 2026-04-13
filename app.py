@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 from enum import Enum
 
+from dotenv import load_dotenv
+
 from core.audio import AudioRecorder
 from core.router import CommandRouter
 from core.stt import SpeechToText
@@ -32,6 +34,7 @@ def _show_state(state: AssistantState) -> None:
 
 
 def main() -> None:
+    load_dotenv()
     log_file = setup_logger()
     logger = logging.getLogger(__name__)
 

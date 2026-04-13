@@ -1,47 +1,107 @@
-# 本地语音助手（最小 Ollama 兜底版）
+# 本地语音助手（规则优先 + 双 LLM 后端）
 
-本项目基于本地技术栈：
+本项目保持本地优先与规则优先架构：
 
-- `sounddevice`（录音）
-- `faster-whisper`（语音识别）
-- `pyttsx3`（语音播报）
-- `Ollama`（本地 LLM 兜底）
+- 录音：`sounddevice`
+- 语音识别：`faster-whisper`
+- 语音播报：`pyttsx3`
+- LLM 兜底：`Ollama` 或 `OpenAI GPT`（可切换）
 
-> 不接云端服务，不做 GUI，不执行任意系统命令。
-
----
-
-## 本轮完成内容（小阶段）
-
-1. 新增 Ollama 调用模块：`core/llm.py`
-2. 在 `config.py` 增加 Ollama 配置项
-3. 路由改为“规则优先，LLM 兜底”
-4. LLM 仅支持固定 JSON 动作：
-   - `open_browser`
-   - `get_time`
-   - `unknown`
-5. 做了最小解析与异常降级
-6. 更新 README
-7. 增加最小测试
+> 不做 GUI，不接任意 shell 执行。
 
 ---
 
-## 路由策略
+## 架构策略
 
-1. 先走规则匹配（原有能力不变）
-2. 规则未命中时，调用 Ollama
-3. 解析 Ollama 的 JSON
-4. 只允许执行白名单动作（本轮仅 `open_browser` / `get_time`）
-5. 异常或非法 JSON 则降级为未知命令
+1. 先走规则路由（原有命令优先）
+2. 规则未命中时按配置选择 LLM 后端：
+   - `none`
+   - `ollama`
+   - `openai`
+3. LLM 输出必须符合统一 JSON 协议
+4. 最终仍通过 skills 白名单执行动作
 
 ---
 
-## Ollama 配置（`config.py`）
+## 统一动作协议
 
-- `OLLAMA_ENABLED`：是否启用 LLM 兜底（默认 `False`）
-- `OLLAMA_MODEL`：模型名（默认 `qwen2.5:3b`）
-- `OLLAMA_BASE_URL`：服务地址（默认 `http://127.0.0.1:11434`）
-- `OLLAMA_TIMEOUT`：超时时间（秒）
+```json
+{
+  "action": "open_browser | open_app | get_time | get_system_info | exit | unknown",
+  "params": {}
+}
+```
+
+- `open_app` 仅允许 `params.app = notepad | calc`
+- 白名单外 action 会被拦截为失败/降级
+
+---
+
+## 配置说明（`config.py`）
+
+### 通用
+- `LLM_ENABLED`
+- `LLM_BACKEND = none | ollama | openai`
+- `LLM_TIMEOUT`
+- `LLM_FALLBACK_ENABLED`
+
+### Ollama
+- `OLLAMA_ENABLED`
+- `OLLAMA_MODEL`
+- `OLLAMA_BASE_URL`
+- `OLLAMA_TIMEOUT`
+
+### OpenAI
+- `OPENAI_ENABLED`
+- `OPENAI_MODEL`
+- `OPENAI_BASE_URL`
+- `OPENAI_TIMEOUT`
+- `OPENAI_USE_RESPONSES_API`
+
+---
+
+## 环境变量与 .env
+
+- OpenAI Key 必须来自环境变量：`OPENAI_API_KEY`
+- 可复制 `.env.example` 为 `.env` 后修改
+- `.env` 已在 `.gitignore` 中，避免泄漏
+
+示例：
+
+```bash
+cp .env.example .env
+```
+
+---
+
+## 如何切换后端
+
+### 1) 完全禁用 LLM
+- `LLM_ENABLED = False`
+- 或 `LLM_BACKEND = "none"`
+
+### 2) 使用 Ollama
+- `LLM_ENABLED = True`
+- `LLM_BACKEND = "ollama"`
+- `OLLAMA_ENABLED = True`
+
+### 3) 使用 OpenAI
+- `LLM_ENABLED = True`
+- `LLM_BACKEND = "openai"`
+- `OPENAI_ENABLED = True`
+- 设置 `OPENAI_API_KEY`
+
+---
+
+## 安装与运行
+
+```bash
+python -m venv .venv
+# Windows
+.venv\Scripts\activate
+pip install -r requirements.txt
+python app.py
+```
 
 ---
 
@@ -51,31 +111,23 @@
 ollama pull qwen2.5:3b
 ```
 
-确保 Ollama 服务已启动并可访问 `OLLAMA_BASE_URL`。
+并确保 Ollama 服务可访问 `OLLAMA_BASE_URL`。
 
 ---
 
 ## 最小验证
 
-### 1) 单元测试
 ```bash
-python -m unittest tests.test_router tests.test_llm
-```
-
-### 2) 文本模拟（无需麦克风）
-```bash
+python -m unittest tests.test_router tests.test_llm tests.test_llm_factory
+python scripts_self_check.py
 python scripts_text_simulator.py
-```
-
-### 3) 语法检查
-```bash
-python -m py_compile app.py config.py core/*.py skills/*.py utils/*.py tests/*.py scripts_self_check.py scripts_text_simulator.py
+python -m py_compile app.py config.py core/*.py core/llm/*.py skills/*.py utils/*.py tests/*.py scripts_self_check.py scripts_text_simulator.py
 ```
 
 ---
 
-## 本轮限制（下一轮再做）
+## 安全边界
 
-- LLM 暂不支持 `open_app` / `get_system_info` / `exit`
-- 暂不做多参数复杂动作
-- 暂不做 GUI / 云端能力 / 任意命令执行
+- 不允许 LLM 直接执行任意系统命令
+- LLM 只能映射到白名单 action
+- 解析失败、网络失败、缺失 API Key 都会优雅降级

@@ -27,11 +27,24 @@ ENABLE_WAKE_WORD = False
 WAKE_WORDS = ("小助手", "电脑", "助手")
 WAKE_WORD_STRICT = True
 
-# Ollama 配置（规则未命中时兜底）
+# 通用 LLM 配置
+LLM_ENABLED = False
+LLM_BACKEND = "none"  # none | ollama | openai
+LLM_TIMEOUT = 15
+LLM_FALLBACK_ENABLED = True
+
+# Ollama 配置
 OLLAMA_ENABLED = False
 OLLAMA_MODEL = "qwen2.5:3b"
 OLLAMA_BASE_URL = "http://127.0.0.1:11434"
 OLLAMA_TIMEOUT = 15
+
+# OpenAI 配置
+OPENAI_ENABLED = False
+OPENAI_MODEL = "gpt-4.1-mini"
+OPENAI_BASE_URL = ""
+OPENAI_TIMEOUT = 20
+OPENAI_USE_RESPONSES_API = True
 
 # 交互与路由配置
 EXIT_KEYWORDS = ("退出程序", "退出", "结束", "关闭助手")

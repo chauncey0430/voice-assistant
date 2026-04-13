@@ -7,12 +7,13 @@ from dataclasses import dataclass
 from config import (
     EMPTY_TRANSCRIPT_HINT,
     ENABLE_WAKE_WORD,
+    LLM_ENABLED,
     UNKNOWN_COMMAND_HINT,
     WAKE_WORD_STRICT,
     WAKE_WORDS,
 )
-from core.llm import LLMDecision, OllamaIntentParser
-from skills.registry import get_action_handlers, get_skill_definitions
+from core.llm import LLMDecision, get_llm_provider
+from skills.registry import get_action_handlers, get_skill_definitions, run_open_app
 from utils.text import normalize_text, strip_wake_word
 
 
@@ -28,10 +29,10 @@ class RouteResult:
 class CommandRouter:
     """基于关键词匹配的轻量级路由器（规则优先，LLM 兜底）。"""
 
-    def __init__(self, llm_parser: OllamaIntentParser | None = None) -> None:
+    def __init__(self, llm_provider=None) -> None:
         self.skills = get_skill_definitions()
         self.action_handlers = get_action_handlers()
-        self.llm_parser = llm_parser or OllamaIntentParser()
+        self.llm_provider = llm_provider or get_llm_provider()
 
     def route(self, text: str) -> RouteResult:
         normalized = normalize_text(text)
@@ -71,24 +72,36 @@ class CommandRouter:
                         source="rule",
                     )
 
-        # 2) LLM 兜底（本阶段仅 open_browser/get_time/unknown）
-        llm_decision = self.llm_parser.parse_intent(normalized)
+        # 2) LLM 兜底
+        if not LLM_ENABLED:
+            return RouteResult(UNKNOWN_COMMAND_HINT, source="rule")
+
+        llm_decision = self.llm_provider.parse_intent(normalized)
         llm_result = self._run_llm_decision(llm_decision)
         if llm_result:
             return llm_result
 
-        return RouteResult(UNKNOWN_COMMAND_HINT, source="rule")
+        return RouteResult("LLM 解析失败，已降级为未知命令。", source="llm")
 
     def _run_llm_decision(self, decision: LLMDecision) -> RouteResult | None:
         if decision.error:
             return None
 
         action = decision.action
-        if action == "unknown":
-            return None
+        params = decision.params or {}
 
-        if action not in {"open_browser", "get_time"}:
-            return None
+        if action == "unknown":
+            return RouteResult(UNKNOWN_COMMAND_HINT, source="llm", matched_skill="unknown")
+
+        if action == "open_app":
+            app_name = str(params.get("app", "")).strip().lower()
+            if not app_name:
+                return None
+            return RouteResult(
+                response_text=run_open_app(app_name),
+                matched_skill=f"open_app:{app_name}",
+                source="llm",
+            )
 
         handler = self.action_handlers.get(action)
         if not handler:
@@ -96,6 +109,7 @@ class CommandRouter:
 
         return RouteResult(
             response_text=handler(),
+            should_exit=action == "exit",
             matched_skill=action,
             source="llm",
         )
